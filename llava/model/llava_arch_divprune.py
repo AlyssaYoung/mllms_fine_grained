@@ -31,6 +31,7 @@ from llava.utils import rank0_print, rank_print
 import random
 
 import pdb
+from test_position_rank import map_chessboard_hungarian
 
 class LlavaMetaModel:
 
@@ -581,7 +582,6 @@ class LlavaMetaForCausalLM(ABC):
         # import pdb; pdb.set_trace()
         # rank0_print("Finish preparing")
 
-        # position_ids and attention_mask are needed
         # divprune
         SYS_TOKEN_LEN = 35
         if type(image_features) is list:
@@ -604,49 +604,69 @@ class LlavaMetaForCausalLM(ABC):
 
         B, L, _ = new_input_embeds.shape
         device = new_input_embeds.device
+        print(f"new_input_embeds seq length: {L}")
         attention_mask = torch.ones((B, L), dtype=torch.long, device=new_input_embeds.device)
+        # print(f"attention_mask: {attention_mask.shape}")
         position_ids = attention_mask.long().cumsum(-1) - 1
         position_ids.masked_fill_(attention_mask == 0, 0)
-
+ 
         base_pos = position_ids.clone()
-
+        
         H24 = W24 = 24
         rK = torch.arange(K, device=device).repeat_interleave(K)               # [K*K]
         cK = torch.arange(K, device=device).repeat(K)                          # [K*K]
-        # r24 = torch.round(rK.float() * (H24 - 1) / (K - 1)).to(torch.long)
-        # c24 = torch.round(cK.float() * (W24 - 1) / (K - 1)).to(torch.long)
-        # pid24 = (r24 * W24 + c24).clamp_(0, H24 * W24 - 1)
-        # pid_visual_mapped = SYS_TOKEN_LEN + pid24
-
-        r24f = rK.float() * (H24 - 1) / (K - 1)    # [K*K]，float
-        c24f = cK.float() * (W24 - 1) / (K - 1)
-        pid24f = r24f * W24 + c24f  # float
-        # find the int grid for each visual token
-        pid_int = torch.floor(pid24f).to(torch.long)
-        # group by the int grid, how many visual tokens are in each grid
-        unique_vals, inverse, counts = torch.unique(pid_int, sorted=True, return_inverse=True, return_counts=True)
-        group_position = torch.zeros_like(pid_int)
-        for val in unique_vals:
-            idxs = (pid_int == val).nonzero(as_tuple=True)[0]
-            group_position[idxs] = torch.arange(idxs.numel(), device=device)
-        # calculate a small offset: inside-group-order / group-size * 0.5, ensure offset is in [0, 0.5)
-        offset = (group_position.float() / counts[inverse].float()) * 0.01
-        # adjusted float position ids
-        pid24f_adjusted = pid24f + offset
-        pid_visual_mapped = SYS_TOKEN_LEN + pid24f_adjusted
-        # pdb.set_trace()
-
+        r24 = torch.round(rK.float() * (H24 - 1) / (K - 1)).to(torch.long)
+        c24 = torch.round(cK.float() * (W24 - 1) / (K - 1)).to(torch.long)
+        pid24 = (r24 * W24 + c24).clamp_(0, H24 * W24 - 1)
+        pid_visual_mapped = SYS_TOKEN_LEN + pid24
         start = SYS_TOKEN_LEN
         end = start + img_feature_len
         base_pos[:, start:end] = pid_visual_mapped.unsqueeze(0)
 
-        shrink = img_feature_len - (H24 * W24)                           
+        ##### new added code #####
+        kept_visual_global = keep_indexs[(keep_indexs >= start) & (keep_indexs < end)]
+        assert kept_visual_global.numel() == 576
+        cur = (base_pos[0, kept_visual_global] - SYS_TOKEN_LEN).to(torch.long)
+        N = cur.numel()
+        # 1) 以“值”为主键（升序），以“出现次序”为次键，做唯一化排序
+        #    inverse: 每个元素所属的“值”的组 id（按值升序编号）
+        unique_vals, inverse = torch.unique(cur, sorted=True, return_inverse=True)  # inverse ∈ [0, n_groups)
+        idx = torch.arange(N, device=device)
+        # 在 (group=inverse, 次序=idx) 上做稳定排序，得到组内从左到右的顺序
+        order = torch.argsort(inverse * (N + 1) + idx)       # [N]
+        inv_order = torch.empty_like(order)
+        inv_order[order] = torch.arange(N, device=device)    # 反映射，回到原顺序
+        # 2) 计算每个组的大小，以及组内排名（0,1,2,...）
+        inv_sorted = inverse[order]
+        _, group_counts = torch.unique_consecutive(inv_sorted, return_counts=True)  # [n_groups]
+        # 组内排名（按 sorted 顺序展开，再映射回原顺序）
+        ranks_in_sorted = torch.cat([torch.arange(c, device=device) for c in group_counts.tolist()])  # [N]
+        within_rank = ranks_in_sorted[inv_order]  # [N]
+        # 3) 计算每个“值”组在全体中的起始偏移（按值升序拼接）
+        base_offsets = torch.zeros_like(group_counts)
+        if group_counts.numel() > 1:
+            base_offsets[1:] = torch.cumsum(group_counts, dim=0)[:-1]             # [n_groups]
+        base_for_elem = base_offsets[inverse]                                      # [N]
+        # 4) 最终唯一编码：组起始偏移 + 组内次序  ⇒  0..N-1（这里 N=576）
+        new_rel_ids = base_for_elem + within_rank                                  # [N], 0..575
+        new_abs_ids = (SYS_TOKEN_LEN + new_rel_ids).to(base_pos.dtype)             # 加回全局偏移
+        base_pos[:, kept_visual_global] = new_abs_ids.unsqueeze(0)
+        ##### new added code #####
+
+        shrink = img_feature_len - (H24 * W24)
+        # print(f"shrink: {shrink}")                             
         if shrink > 0 and end < L:
             base_pos[:, end:] = base_pos[:, end:] - shrink
+        # print(f"the last position id:", base_pos[:,-1])        
 
         pos_fixed_full = base_pos
+        # need_3d = (position_ids is not None and position_ids.dim() == 3)
+        # if need_3d:
+        #     pos_fixed_full = pos_fixed_full.unsqueeze(-1) 
+
         new_input_embeds = new_input_embeds[:,keep_indexs]
         if position_ids is not None:
+            # position_ids = position_ids[:,keep_indexs,:]
             position_ids = pos_fixed_full[:,keep_indexs]
         if attention_mask is not None:
             attention_mask = attention_mask[:,keep_indexs]

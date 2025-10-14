@@ -12,7 +12,6 @@ import random
 import numpy as np
 import math
 import torch.nn.functional as F
-from clip_tile_pool import build_576_tokens
 warnings.filterwarnings("ignore")
 
 import pdb
