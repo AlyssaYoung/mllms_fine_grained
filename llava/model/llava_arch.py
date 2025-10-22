@@ -248,33 +248,6 @@ class LlavaMetaForCausalLM(ABC):
         image_feature = image_feature.permute(1, 2, 0).contiguous()
         return image_feature
 
-    # divprune
-    def pairwise_cosine_similarity(self, matrix):
-        norm_matrix = matrix / matrix.norm(dim=1, keepdim=True)
-        cosine_similarity = torch.mm(norm_matrix, norm_matrix.t())
-        return cosine_similarity
-
-    def DivPrune(self, visual_feature_vectors, image_feature_length, cosine_matrix=None, threshold_ratio=0.1):            
-        threshold_terms = int(round(threshold_ratio*image_feature_length))
-        if cosine_matrix is None:
-            cosine_matrix = 1.0 - (self.pairwise_cosine_similarity(visual_feature_vectors))
-
-        s = torch.empty(threshold_terms, dtype=torch.long, device=visual_feature_vectors.device)
-        for i in range(threshold_terms):
-            if i==0:
-                m2 = cosine_matrix
-            else:
-                m2 = torch.index_select(cosine_matrix, 0, torch.index_select(s,0,torch.arange(0,i,device=cosine_matrix.device)))
-
-            if i==0:
-                scores = torch.topk(m2, 2,dim=0,largest=False).values[1,:] #for distance
-            else:
-                scores = torch.min(m2, dim=0).values #for distance 
-
-            phrase_to_add_idx = torch.argmax(scores)
-            s[i] = phrase_to_add_idx
-        return s, cosine_matrix
-
     def prepare_inputs_labels_for_multimodal(self, input_ids, position_ids, attention_mask, past_key_values, labels, images, modalities=["image"], image_sizes=None):
         vision_tower = self.get_vision_tower()
         # rank_print(modalities)
@@ -580,76 +553,6 @@ class LlavaMetaForCausalLM(ABC):
             position_ids[:, split_position:] += right_add
         # import pdb; pdb.set_trace()
         # rank0_print("Finish preparing")
-
-        # position_ids and attention_mask are needed
-        # divprune
-        SYS_TOKEN_LEN = 35
-        if type(image_features) is list:
-            img_feature_len = image_features[0].shape[0]
-        else:
-            img_feature_len = image_features.shape[1] 
-
-        diverse_ratio = float(576 / img_feature_len)
-        print(f"diverse_ratio: {diverse_ratio}")
-        cosine_matrix = None
-
-        visual_tokens =new_input_embeds[0][SYS_TOKEN_LEN:SYS_TOKEN_LEN+img_feature_len]
-        selected_visual_tokens, cosine_matrix = self.DivPrune(visual_tokens, img_feature_len,cosine_matrix,threshold_ratio=diverse_ratio)
-        K = int(math.isqrt(img_feature_len))
-        assert K * K == img_feature_len
-        
-        selected_visual_tokens += SYS_TOKEN_LEN
-        keep_indexs = torch.cat((torch.arange(SYS_TOKEN_LEN,device=new_input_embeds.device), selected_visual_tokens, torch.arange(SYS_TOKEN_LEN+img_feature_len,new_input_embeds.shape[1],device=new_input_embeds.device)))
-        keep_indexs = keep_indexs.sort().values
-
-        B, L, _ = new_input_embeds.shape
-        device = new_input_embeds.device
-        attention_mask = torch.ones((B, L), dtype=torch.long, device=new_input_embeds.device)
-        position_ids = attention_mask.long().cumsum(-1) - 1
-        position_ids.masked_fill_(attention_mask == 0, 0)
-
-        base_pos = position_ids.clone()
-
-        H24 = W24 = 24
-        rK = torch.arange(K, device=device).repeat_interleave(K)               # [K*K]
-        cK = torch.arange(K, device=device).repeat(K)                          # [K*K]
-        # r24 = torch.round(rK.float() * (H24 - 1) / (K - 1)).to(torch.long)
-        # c24 = torch.round(cK.float() * (W24 - 1) / (K - 1)).to(torch.long)
-        # pid24 = (r24 * W24 + c24).clamp_(0, H24 * W24 - 1)
-        # pid_visual_mapped = SYS_TOKEN_LEN + pid24
-
-        r24f = rK.float() * (H24 - 1) / (K - 1)    # [K*K]，float
-        c24f = cK.float() * (W24 - 1) / (K - 1)
-        pid24f = r24f * W24 + c24f  # float
-        # find the int grid for each visual token
-        pid_int = torch.floor(pid24f).to(torch.long)
-        # group by the int grid, how many visual tokens are in each grid
-        unique_vals, inverse, counts = torch.unique(pid_int, sorted=True, return_inverse=True, return_counts=True)
-        group_position = torch.zeros_like(pid_int)
-        for val in unique_vals:
-            idxs = (pid_int == val).nonzero(as_tuple=True)[0]
-            group_position[idxs] = torch.arange(idxs.numel(), device=device)
-        # calculate a small offset: inside-group-order / group-size * 0.5, ensure offset is in [0, 0.5)
-        offset = (group_position.float() / counts[inverse].float()) * 0.01
-        # adjusted float position ids
-        pid24f_adjusted = pid24f + offset
-        pid_visual_mapped = SYS_TOKEN_LEN + pid24f_adjusted
-        # pdb.set_trace()
-
-        start = SYS_TOKEN_LEN
-        end = start + img_feature_len
-        base_pos[:, start:end] = pid_visual_mapped.unsqueeze(0)
-
-        shrink = img_feature_len - (H24 * W24)                           
-        if shrink > 0 and end < L:
-            base_pos[:, end:] = base_pos[:, end:] - shrink
-
-        pos_fixed_full = base_pos
-        new_input_embeds = new_input_embeds[:,keep_indexs]
-        if position_ids is not None:
-            position_ids = pos_fixed_full[:,keep_indexs]
-        if attention_mask is not None:
-            attention_mask = attention_mask[:,keep_indexs]
 
         return None, position_ids, attention_mask, past_key_values, new_input_embeds, new_labels
 

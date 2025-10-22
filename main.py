@@ -413,6 +413,7 @@ if __name__ == "__main__":
 
     # In this script, we only support direct answering (no zoom search)
     results_file = open(args.answers_file, file_mode)
+    # for debug for ntk rope position embedding
     for annotation in tqdm(annotations):
         #dinov3_feat_size = dinov3_feat[annotation['input_image']]['resized_resolution']
         response = multiple_choices_inference(

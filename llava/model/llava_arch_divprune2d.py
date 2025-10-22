@@ -248,6 +248,47 @@ class LlavaMetaForCausalLM(ABC):
         image_feature = image_feature.permute(1, 2, 0).contiguous()
         return image_feature
 
+    def pairwise_cosine_similarity(self, matrix):
+        norm_matrix = matrix / matrix.norm(dim=1, keepdim=True)
+        cosine_similarity = torch.mm(norm_matrix, norm_matrix.t())  # [N, N]
+        return cosine_similarity
+
+    def greedy_diverse_subset(self, dist_matrix, k):
+        N = dist_matrix.size(0)
+        selected = torch.empty(k, dtype=torch.long, device=dist_matrix.device)
+
+        for i in range(k):
+            if i == 0:
+                scores = torch.topk(dist_matrix, 2, dim=0, largest=True).values[1]
+            else:
+                dist_to_selected = dist_matrix[selected[:i]]
+                scores = torch.min(dist_to_selected, dim=0).values
+
+            scores[selected[:i]] = -float('inf')
+            selected[i] = torch.argmax(scores)
+
+        return torch.sort(selected).values
+
+    def DivPrune2D(self, visual_feature_vectors_2d, threshold_ratio=0.5):
+        H, W, D = visual_feature_vectors_2d.shape
+        device = visual_feature_vectors_2d.device
+
+        # --- Row Selection ---
+        row_vectors = visual_feature_vectors_2d.reshape(H, -1)  # [H, W*D]
+        row_sim = self.pairwise_cosine_similarity(row_vectors)
+        row_dist = 1.0 - row_sim  
+        row_k = int(round(threshold_ratio * H))
+        selected_rows = self.greedy_diverse_subset(row_dist, row_k)
+
+        # --- Column Selection ---
+        col_vectors = visual_feature_vectors_2d.permute(1, 0, 2).reshape(W, -1)  # [W, H*D]
+        col_sim = self.pairwise_cosine_similarity(col_vectors)
+        col_dist = 1.0 - col_sim 
+        col_k = int(round(threshold_ratio * W))
+        selected_cols = self.greedy_diverse_subset(col_dist, col_k)
+
+        return selected_rows, selected_cols
+
     def prepare_inputs_labels_for_multimodal(self, input_ids, position_ids, attention_mask, past_key_values, labels, images, modalities=["image"], image_sizes=None):
         vision_tower = self.get_vision_tower()
         # rank_print(modalities)
@@ -553,6 +594,31 @@ class LlavaMetaForCausalLM(ABC):
             position_ids[:, split_position:] += right_add
         # import pdb; pdb.set_trace()
         # rank0_print("Finish preparing")
+
+        # position_ids and attention_mask are needed
+        # divprune 2D
+        SYS_TOKEN_LEN = 35
+        if type(image_features) is list:
+            img_feature_len = image_features[0].shape[0]
+        else:
+            img_feature_len = image_features.shape[1] 
+
+        visual_tokens =new_input_embeds[0][SYS_TOKEN_LEN:SYS_TOKEN_LEN+img_feature_len]
+        K = int(math.isqrt(img_feature_len))
+        assert K * K == img_feature_len
+        visual_tokens_2d = visual_tokens.reshape(K, K, -1) # [K, K, D]
+        selected_rows, selected_cols = self.DivPrune2D(visual_tokens_2d)
+        row_idx, col_idx = torch.meshgrid(selected_rows, selected_cols, indexing='ij')  # [r, c]
+        selected_visual_tokens = (row_idx * K + col_idx).reshape(-1)
+        selected_visual_tokens = selected_visual_tokens.to(dtype=torch.long, device=visual_tokens.device)
+        keep_indexs = torch.cat((
+                        torch.arange(SYS_TOKEN_LEN, device=new_input_embeds.device),
+                        selected_visual_tokens + SYS_TOKEN_LEN, 
+                        torch.arange(SYS_TOKEN_LEN + img_feature_len, new_input_embeds.shape[1], device=new_input_embeds.device)
+                    ))
+        keep_indexs = keep_indexs.sort().values
+
+        new_input_embeds = new_input_embeds[:, keep_indexs]
 
         return None, position_ids, attention_mask, past_key_values, new_input_embeds, new_labels
 
