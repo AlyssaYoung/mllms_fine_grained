@@ -577,6 +577,7 @@ conv_templates = {
     "mpt": conv_mpt,
     "qwen_1_5": conv_qwen,
     "qwen_2": conv_qwen,
+    "qwen_2_5": conv_qwen,
     "gemma_instruct": conv_gemma_instruct,
 }
 

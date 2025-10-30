@@ -21,137 +21,6 @@ import types
 from contextlib import contextmanager
 import inspect
 
-def _finite(name, t):
-    if t is None or not torch.is_tensor(t): return
-    if not torch.isfinite(t).all():
-        raise RuntimeError(f"[NaNGuard] {name} has NaN/Inf. shape={tuple(t.shape)}")
-
-def _stats(name, t):
-    if t is None or not torch.is_tensor(t): return
-    tt = t[torch.isfinite(t)]
-    if tt.numel() == 0:
-        print(f"[NaNGuard] {name}: all invalid")
-        return
-    print(f"[NaNGuard] {name}: dtype={t.dtype} "
-          f"min={tt.min().item():.4e} max={tt.max().item():.4e} "
-          f"mean={tt.mean().item():.4e} std={tt.std().item():.4e}")
-
-def patch_rope_debug(model):
-    # 兼容导入失败的情况
-    try:
-        from transformers.models.llama.modeling_llama import (
-            LlamaRotaryEmbedding, LlamaLinearScalingRotaryEmbedding, LlamaDynamicNTKScalingRotaryEmbedding
-        )
-        rope_types = (LlamaRotaryEmbedding, LlamaLinearScalingRotaryEmbedding, LlamaDynamicNTKScalingRotaryEmbedding)
-    except Exception:
-        rope_types = ()
-
-    for m in model.modules():
-        if rope_types and isinstance(m, rope_types):
-            if hasattr(m, "_orig_forward"):
-                continue
-
-            m._orig_forward = m.forward
-            sig = inspect.signature(m._orig_forward)
-            # 判断是否带 seq_len 参数
-            has_seq_len = ("seq_len" in sig.parameters)
-
-            def _fwd(self, x, position_ids, *args, **kwargs):
-                # 入口检查
-                _finite("RoPE.in.hidden", x)
-                _finite("RoPE.in.position_ids", position_ids)
-                # 兼容不同签名
-                if has_seq_len:
-                    cos, sin = self._orig_forward(x, position_ids, *args, **kwargs)
-                else:
-                    # 把多余的参数丢弃，避免“多传”
-                    cos, sin = self._orig_forward(x, position_ids)
-                # 出口检查
-                _finite("RoPE.out.cos", cos); _stats("RoPE.out.cos", cos)
-                _finite("RoPE.out.sin", sin); _stats("RoPE.out.sin", sin)
-                with torch.no_grad():
-                    print(f"[NaNGuard] position_ids: min={int(position_ids.min())}, max={int(position_ids.max())}, len={position_ids.shape[-1]}")
-                return cos, sin
-
-            m.forward = types.MethodType(_fwd, m)
-
-def unpatch_rope_debug(model):
-    for m in model.modules():
-        if hasattr(m, "_orig_forward"):
-            m.forward = m._orig_forward
-            delattr(m, "_orig_forward")
-
-
-def patch_decoder_layer_debug(model):
-    # 只在 LlamaDecoderLayer 上打 hook
-    from transformers.models.llama.modeling_llama import LlamaDecoderLayer
-
-    for layer in model.modules():
-        if not isinstance(layer, LlamaDecoderLayer):
-            continue
-
-        # 在注册时“固化”layer_idx，避免闭包晚绑定
-        layer_idx = getattr(layer.self_attn, "layer_idx", -1)
-
-        # 工厂函数：把 tag 固化为默认参数
-        def make_simple_hook(tag):
-            def _hook(mod, inp, out, _tag=tag):
-                _finite(_tag, out); _stats(_tag, out)
-            return _hook
-
-        # 注意：自注意力的 forward 返回 (hidden, attn_weights/None, pkv)
-        def attn_hook(mod, inp, out, _idx=layer_idx):
-            h = out[0] if isinstance(out, (tuple, list)) else out
-            _finite(f"Layer{_idx}.attn.out", h)
-            _stats (f"Layer{_idx}.attn.out", h)
-
-        # 注册（每个 layer 只注册一次）
-        layer.input_layernorm.register_forward_hook(
-            make_simple_hook(f"Layer{layer_idx}.input_ln.out")
-        )
-        layer.self_attn.register_forward_hook(attn_hook)
-        layer.post_attention_layernorm.register_forward_hook(
-            make_simple_hook(f"Layer{layer_idx}.post_attn_ln.out")
-        )
-        layer.mlp.register_forward_hook(
-            make_simple_hook(f"Layer{layer_idx}.mlp.out")
-        )
-
-def check_seq_lengths(question_input_ids, projected_vision, pkv=None, limit=None):
-    text_len = int(question_input_ids.shape[1])
-    vis_len  = int(projected_vision.shape[1]) if projected_vision is not None else 0
-    total_len = text_len + vis_len
-    msg = f"[NaNGuard] text_len={text_len}, vision_len={vis_len}, total={total_len}"
-    if limit is not None:
-        msg += f", limit={limit}"
-    print(msg)
-    if limit is not None and total_len > limit:
-        print(f"[NaNGuard][WARN] total_len {total_len} > max_position_embeddings {limit} → 高风险(ROPE/注意力不稳)")
-    # KV（续算前）长度
-    if pkv is not None:
-        try:
-            if hasattr(pkv, "get_seq_length"):
-                cache_len = int(pkv.get_seq_length())
-            else:
-                cache_len = int(pkv[0][0].shape[2])
-            print(f"[NaNGuard] kv_cache_len={cache_len}")
-        except Exception:
-            pass
-
-@contextmanager
-def enable_nan_guard(model):
-    patch_rope_debug(model)
-    patch_decoder_layer_debug(model)
-    try:
-        yield
-    finally:
-        # 可选：恢复 rope 的原 forward（不强制）
-        for m in model.modules():
-            if hasattr(m, "_orig_forward"):
-                m.forward = m._orig_forward
-                delattr(m, "_orig_forward")
-
-
 # Set random seeds for reproducible results
 def set_seed(seed=42):
     random.seed(seed)
@@ -166,7 +35,7 @@ def set_seed(seed=42):
 set_seed(42)
 
 # Add current directory to Python path to import local LLaVA
-sys.path.insert(0, "/data/pinci/code/mllms_fine_grained")
+sys.path.insert(0, "~/code/mllms_fine_grained")
 
 from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN
 from llava.conversation import conv_templates
@@ -255,7 +124,6 @@ def multiple_choices_inference(args, model, tokenizer, image_processor, annotati
         )
     finally:
         model.encode_images = original_encode_images
-
     question_logits = output_question.logits
     question_past_key_values = output_question.past_key_values
 
@@ -353,7 +221,6 @@ if __name__ == "__main__":
     # parser.add_argument("--dinov3_feat_path", type=str, required=True, help="Path to dinov3 features")
 
     args = parser.parse_args()
-
     # Load model (supports both v1.5 and OneVision backends)
     model, tokenizer, image_processor, default_conv_type, use_qwen = load_llava_model(
         model_path=args.model_path,

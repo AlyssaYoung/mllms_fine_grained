@@ -624,33 +624,33 @@ class LlavaMetaForCausalLM(ABC):
         base_pos[:, start:end] = pid_visual_mapped.unsqueeze(0)
 
         ##### new added code #####
-        kept_visual_global = keep_indexs[(keep_indexs >= start) & (keep_indexs < end)]
-        assert kept_visual_global.numel() == 576
-        cur = (base_pos[0, kept_visual_global] - SYS_TOKEN_LEN).to(torch.long)
-        N = cur.numel()
-        # 1) 以“值”为主键（升序），以“出现次序”为次键，做唯一化排序
-        #    inverse: 每个元素所属的“值”的组 id（按值升序编号）
-        unique_vals, inverse = torch.unique(cur, sorted=True, return_inverse=True)  # inverse ∈ [0, n_groups)
-        idx = torch.arange(N, device=device)
-        # 在 (group=inverse, 次序=idx) 上做稳定排序，得到组内从左到右的顺序
-        order = torch.argsort(inverse * (N + 1) + idx)       # [N]
-        inv_order = torch.empty_like(order)
-        inv_order[order] = torch.arange(N, device=device)    # 反映射，回到原顺序
-        # 2) 计算每个组的大小，以及组内排名（0,1,2,...）
-        inv_sorted = inverse[order]
-        _, group_counts = torch.unique_consecutive(inv_sorted, return_counts=True)  # [n_groups]
-        # 组内排名（按 sorted 顺序展开，再映射回原顺序）
-        ranks_in_sorted = torch.cat([torch.arange(c, device=device) for c in group_counts.tolist()])  # [N]
-        within_rank = ranks_in_sorted[inv_order]  # [N]
-        # 3) 计算每个“值”组在全体中的起始偏移（按值升序拼接）
-        base_offsets = torch.zeros_like(group_counts)
-        if group_counts.numel() > 1:
-            base_offsets[1:] = torch.cumsum(group_counts, dim=0)[:-1]             # [n_groups]
-        base_for_elem = base_offsets[inverse]                                      # [N]
-        # 4) 最终唯一编码：组起始偏移 + 组内次序  ⇒  0..N-1（这里 N=576）
-        new_rel_ids = base_for_elem + within_rank                                  # [N], 0..575
-        new_abs_ids = (SYS_TOKEN_LEN + new_rel_ids).to(base_pos.dtype)             # 加回全局偏移
-        base_pos[:, kept_visual_global] = new_abs_ids.unsqueeze(0)
+        # kept_visual_global = keep_indexs[(keep_indexs >= start) & (keep_indexs < end)]
+        # assert kept_visual_global.numel() == 576
+        # cur = (base_pos[0, kept_visual_global] - SYS_TOKEN_LEN).to(torch.long)
+        # N = cur.numel()
+        # # 1) 以“值”为主键（升序），以“出现次序”为次键，做唯一化排序
+        # #    inverse: 每个元素所属的“值”的组 id（按值升序编号）
+        # unique_vals, inverse = torch.unique(cur, sorted=True, return_inverse=True)  # inverse ∈ [0, n_groups)
+        # idx = torch.arange(N, device=device)
+        # # 在 (group=inverse, 次序=idx) 上做稳定排序，得到组内从左到右的顺序
+        # order = torch.argsort(inverse * (N + 1) + idx)       # [N]
+        # inv_order = torch.empty_like(order)
+        # inv_order[order] = torch.arange(N, device=device)    # 反映射，回到原顺序
+        # # 2) 计算每个组的大小，以及组内排名（0,1,2,...）
+        # inv_sorted = inverse[order]
+        # _, group_counts = torch.unique_consecutive(inv_sorted, return_counts=True)  # [n_groups]
+        # # 组内排名（按 sorted 顺序展开，再映射回原顺序）
+        # ranks_in_sorted = torch.cat([torch.arange(c, device=device) for c in group_counts.tolist()])  # [N]
+        # within_rank = ranks_in_sorted[inv_order]  # [N]
+        # # 3) 计算每个“值”组在全体中的起始偏移（按值升序拼接）
+        # base_offsets = torch.zeros_like(group_counts)
+        # if group_counts.numel() > 1:
+        #     base_offsets[1:] = torch.cumsum(group_counts, dim=0)[:-1]             # [n_groups]
+        # base_for_elem = base_offsets[inverse]                                      # [N]
+        # # 4) 最终唯一编码：组起始偏移 + 组内次序  ⇒  0..N-1（这里 N=576）
+        # new_rel_ids = base_for_elem + within_rank                                  # [N], 0..575
+        # new_abs_ids = (SYS_TOKEN_LEN + new_rel_ids).to(base_pos.dtype)             # 加回全局偏移
+        # base_pos[:, kept_visual_global] = new_abs_ids.unsqueeze(0)
         ##### new added code #####
 
         shrink = img_feature_len - (H24 * W24)
