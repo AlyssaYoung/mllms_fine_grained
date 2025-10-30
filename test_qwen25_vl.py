@@ -12,27 +12,6 @@ import json
 from tqdm import tqdm
 from PIL import Image
 import copy
-# from accelerate import dispatch_model, infer_auto_device_map   
-
-# messages = [
-#     {
-#         "role": "user",
-#         "content": [
-#             {
-#                 "type": "image",
-#                 "image": "https://qianwen-res.oss-cn-beijing.aliyuncs.com/Qwen-VL/assets/demo.jpeg",
-#             },
-#             {"type": "text", "text": "Describe this image."},
-#         ],
-#     }
-# ]
-
-# Preparation for inference
-# '<|im_start|>system\n
-# You are a helpful assistant.<|im_end|>\n
-# <|im_start|>user\n
-# <|vision_start|><|image_pad|><|vision_end|>Describe this image.<|im_end|>\n
-# <|im_start|>assistant\n'
 
 def get_direct_response(model, processor, annotation, messages_template, image_folder):
     input_image = annotation["input_image"]
