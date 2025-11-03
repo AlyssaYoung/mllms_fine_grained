@@ -1,0 +1,137 @@
+# ------------------------------
+# OS-level
+# ------------------------------
+.DS_Store
+Thumbs.db
+
+# ------------------------------
+# Python bytecode / caches
+# ------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.dll
+
+# ------------------------------
+# Python packaging / build
+# ------------------------------
+.build/
+build/
+dist/
+wheels/
+*.egg-info/
+.eggs/
+*.egg
+pip-wheel-metadata/
+*.manifest
+*.spec
+
+# ------------------------------
+# Virtual environments
+# ------------------------------
+.venv/
+venv/
+env/
+ENV/
+.python-version
+# PEP 582
+__pypackages__/
+
+# ------------------------------
+# Testing / Coverage / QA
+# ------------------------------
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.pyre/
+.pytype/
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+.pyright/
+
+# ------------------------------
+# Notebooks
+# ------------------------------
+.ipynb_checkpoints/
+
+# ------------------------------
+# Logs / runtime / temp
+# ------------------------------
+logs/
+*.log
+*.pid
+*.out
+*.err
+*.tmp
+tmp/
+temp/
+profile_default/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ------------------------------
+# Environment / secrets (keep local only)
+# ------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.der
+*.p12
+
+# ------------------------------
+# Shell-related (history & temp)
+# ------------------------------
+*.swp
+*.swo
+*.swn
+*~
+# direnv
+.direnv/
+
+# ------------------------------
+# Editors / IDE
+# ------------------------------
+.vscode/
+.idea/
+*.iml
+
+# ------------------------------
+# Data dumps / caches (customize as needed)
+# ------------------------------
+*.sqlite
+*.sqlite3
+*.db
+*.db-*
+*.rdb
+.cache/
+.cache-*/
+
+# ------------------------------
+# Containers / CI (optional; uncomment if applicable)
+# ------------------------------
+# docker/volumes/
+# .docker/
+# .podman/
+
+# ------------------------------
+# Project-specific examples (keep templates)
+# ------------------------------
+# Ignore generated configs but keep sample templates
+*.local.*
+*.secret.*
+!*.example
+
+# ------------------------------
+# custom dirs
+vis/
+quit/
