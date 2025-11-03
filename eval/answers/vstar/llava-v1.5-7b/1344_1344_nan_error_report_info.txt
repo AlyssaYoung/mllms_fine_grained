@@ -126,17 +126,17 @@
 [NaNGuard] Layer30.post_attn_ln.out: dtype=torch.float16 min=-1.1633e+01 max=1.6609e+01 mean=-2.0180e-03 std=3.9600e-01
   0%|                                                                                                              | 0/191 [00:02<?, ?it/s]
 Traceback (most recent call last):
-  File "/root/code/mllms_fine_grained/main.py", line 412, in <module>
+  File "/home/pinci/code/mllms_fine_grained/main.py", line 412, in <module>
     response = multiple_choices_inference(
   File "/root/miniconda3/envs/mllms_fine/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 115, in decorate_context
     return func(*args, **kwargs)
-  File "/root/code/mllms_fine_grained/main.py", line 245, in multiple_choices_inference
+  File "/home/pinci/code/mllms_fine_grained/main.py", line 245, in multiple_choices_inference
     output_question = model(
   File "/root/miniconda3/envs/mllms_fine/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1518, in _wrapped_call_impl
     return self._call_impl(*args, **kwargs)
   File "/root/miniconda3/envs/mllms_fine/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1527, in _call_impl
     return forward_call(*args, **kwargs)
-  File "/root/code/mllms_fine_grained/llava/model/language_model/llava_llama.py", line 109, in forward
+  File "/home/pinci/code/mllms_fine_grained/llava/model/language_model/llava_llama.py", line 109, in forward
     return super().forward(
   File "/root/miniconda3/envs/mllms_fine/lib/python3.10/site-packages/transformers/models/llama/modeling_llama.py", line 1190, in forward
     outputs = self.model(
@@ -156,8 +156,8 @@ Traceback (most recent call last):
     return self._call_impl(*args, **kwargs)
   File "/root/miniconda3/envs/mllms_fine/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1581, in _call_impl
     hook_result = hook(self, args, result)
-  File "/root/code/mllms_fine_grained/main.py", line 100, in _hook
+  File "/home/pinci/code/mllms_fine_grained/main.py", line 100, in _hook
     _finite(_tag, out); _stats(_tag, out)
-  File "/root/code/mllms_fine_grained/main.py", line 28, in _finite
+  File "/home/pinci/code/mllms_fine_grained/main.py", line 28, in _finite
     raise RuntimeError(f"[NaNGuard] {name} has NaN/Inf. shape={tuple(t.shape)}")
 RuntimeError: [NaNGuard] Layer30.mlp.out has NaN/Inf. shape=(1, 9266, 4096)
