@@ -160,18 +160,6 @@ def process_anyres_image(image, processor, grid_pinpoints, show_crop=False):
     image_patches = [processor.preprocess(image_patch, return_tensors="pt")["pixel_values"][0] for image_patch in image_patches]
     return torch.stack(image_patches, dim=0)
 
-@torch.no_grad()
-def sliding_window_encode(
-    image: torch.Tensor,    # [B, 3, H, W]
-    encode_fn,    # callable: (tiles:[N,3,Ws,Ws]) -> patch_feats:[N,K,K,D]
-    window_size: int = 336,
-    stride:      int = 224,
-    patch_size:  int = 14,
-    device:      torch.device | None = None,
-    tile_batch:  int = 64,     
-    eps:         float = 1e-6,
-    dtype:       torch.dtype | None = None,
-):
     assert window_size % patch_size == 0
     B, C, H, W = image.shape
     device = device or image.device
