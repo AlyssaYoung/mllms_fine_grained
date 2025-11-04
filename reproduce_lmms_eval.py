@@ -68,15 +68,15 @@ def extract_answer_letter(response: str) -> str | None:
     return None
 
 if __name__ == "__main__":
-    model_name = "/data1/pinci/ckpt/huggingface/Qwen2.5-VL-7B-Instruct"
+    model_name = "/root/autodl-tmp/ckpt/Qwen2.5-VL-7B-Instruct"
     processor = AutoProcessor.from_pretrained(model_name, max_pixels=12845056)
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
         model_name, torch_dtype=torch.float16, device_map="auto",
                 attn_implementation="flash_attention_2"
     ).eval()
 
-    annotation_file = "/data1/pinci/datasets/zoom_eye_data/vstar/annotation_vstar.json"
-    image_folder = "/data1/pinci/datasets/zoom_eye_data/vstar"
+    annotation_file = "/root/autodl-tmp/dataset/zoom_eye_data/zoom_eye_data/vstar/annotation_vstar.json"
+    image_folder = "/root/autodl-tmp/dataset/zoom_eye_data/zoom_eye_data/vstar"
     with open(annotation_file, 'r') as f:
         all_annotations = json.load(f)
 

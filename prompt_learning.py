@@ -1,7 +1,6 @@
 import numpy as np
 from transformers import Qwen2_5_VLForConditionalGeneration, AutoTokenizer, AutoProcessor
-from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLAttention, Qwen2_5_VLFlashAttention2, apply_multimodal_rotary_pos_emb, repeat_kv
-from transformers.modeling_flash_attention_utils import _flash_attention_forward
+from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import Qwen2_5_VLAttention,apply_multimodal_rotary_pos_emb, repeat_kv
 from qwen_vl_utils import process_vision_info
 import torch
 import pdb 
@@ -23,11 +22,11 @@ from qwen_2_5_vl_utils import (
 )
 import copy
 from torch.nn import CrossEntropyLoss
+from collections.abc import Callable
 
 class HookedQwenAttention(Qwen2_5_VLAttention):
     def __init__(self, config, layer_idx=None):
-        super().__init__(config)
-        self.layer_idx = layer_idx
+        super().__init__(config=config, layer_idx=layer_idx)
 
     def forward(
         self,
@@ -38,9 +37,8 @@ class HookedQwenAttention(Qwen2_5_VLAttention):
         output_attentions: bool = False,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
-        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # necessary, but kept here for BC
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
-
         bsz, q_len, _ = hidden_states.size()
 
         query_states = self.q_proj(hidden_states)
@@ -57,34 +55,39 @@ class HookedQwenAttention(Qwen2_5_VLAttention):
         )
 
         if past_key_value is not None:
-            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
+            cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}  # Specific to RoPE models
             key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
 
+        # repeat k/v heads if n_kv_heads < n_heads
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
         attn_weights = torch.matmul(query_states, key_states.transpose(2, 3)) / math.sqrt(self.head_dim)
 
-        if attention_mask is not None:
+        if attention_mask is not None:  # no matter the length, we just slice it
             causal_mask = attention_mask[:, :, :, : key_states.shape[-2]]
             attn_weights = attn_weights + causal_mask
 
+        # Fix precision issues in Qwen2-VL float16 inference
+        # Replace inf values with zeros in attention weights to prevent NaN propagation
         if query_states.dtype == torch.float16:
             attn_weights = torch.where(torch.isinf(attn_weights), torch.zeros_like(attn_weights), attn_weights)
 
+        # upcast attention to fp32
         attn_weights = nn.functional.softmax(attn_weights, dim=-1, dtype=torch.float32).to(query_states.dtype)
         attn_weights = nn.functional.dropout(attn_weights, p=self.attention_dropout, training=self.training)
         attn_output = torch.matmul(attn_weights, value_states)
 
         if attn_output.size() != (bsz, self.num_heads, q_len, self.head_dim):
-            raise ValueError(f"`attn_output` shape wrong: {attn_output.size()}")
+            raise ValueError(
+                f"`attn_output` should be of size {(bsz, self.num_heads, q_len, self.head_dim)}, but is"
+                f" {attn_output.size()}"
+            )
 
         attn_output = attn_output.transpose(1, 2).contiguous()
         attn_output = attn_output.reshape(bsz, q_len, -1)
-        attn_output = self.o_proj(attn_output)
 
-        # if output_attentions:
-        #     print(f"[Hook] attn_weights shape = {attn_weights.shape}")
+        attn_output = self.o_proj(attn_output)
 
         return attn_output, attn_weights, past_key_value
 
@@ -213,21 +216,25 @@ def register_attention_hooks(
 ) -> List[torch.utils.hooks.RemovableHandle]:
     base_model = model.module if hasattr(model, "module") else model
     qwen_model = getattr(base_model, "model", base_model)
-    if not hasattr(qwen_model, "layers"):
+    if hasattr(qwen_model, "layers"):
+        layers = qwen_model.layers
+    elif hasattr(qwen_model, "language_model") and hasattr(qwen_model.language_model, "layers"):
+        layers = qwen_model.language_model.layers
+    else:
         raise AttributeError(
             "Unable to locate transformer layers on the provided model."
         )
     handles: List[torch.utils.hooks.RemovableHandle] = []
     for idx in target_layers:
         # Replace the original attention module with our hooked version.
-        old_attn = qwen_model.layers[idx].self_attn
+        old_attn = layers[idx].self_attn
         # Construct a new module that mirrors the old one.
         device = next(old_attn.parameters()).device
         dtype = next(old_attn.parameters()).dtype
-        hooked_attn = HookedQwenAttention(old_attn.config, layer_idx=old_attn.layer_idx).to(device=device, dtype=dtype)
+        hooked_attn = HookedQwenAttention(config=old_attn.config, layer_idx=old_attn.layer_idx).to(device=device, dtype=dtype)
         hooked_attn.load_state_dict(old_attn.state_dict(), strict=False)
-        hooked_attn.layer_idx = old_attn.layer_idx
-        qwen_model.layers[idx].self_attn = hooked_attn
+        # hooked_attn.layer_idx = old_attn.layer_idx
+        layers[idx].self_attn = hooked_attn
         # Register a forward hook to capture the attention weights.
         def _make_hook(layer_idx: int):
             def hook(module: nn.Module, inp: Tuple[torch.Tensor, ...], out: Tuple[torch.Tensor, torch.Tensor, Cache]):
@@ -253,6 +260,7 @@ def main(
     annotation: Dict,
     messages_fn,
     image_folder: str,
+    attn_mode: str,
 ) -> int:
     input_image = annotation["input_image"]
     image_path = os.path.join(image_folder, input_image)
@@ -279,6 +287,7 @@ def main(
     question_inputs = processor(
         text=[question_prompt], images=image_inputs, return_tensors="pt"
     )
+    question_inputs = question_inputs.to(model.device)
     # Move inputs to the primary device used by the model.
     # question_inputs = {k: v.to(model.device) if isinstance(v, torch.Tensor) else v for k, v in question_inputs.items()}
     target_object_indices = get_target_object_indices(target_object, question_inputs.input_ids, tokenizer)
@@ -304,13 +313,17 @@ def main(
     # Install hooks: one for the visual prompt injection and another for
     # capturing attention weights from specified layers.
     prompt_handle = model.visual.register_forward_hook(add_prompt_hook(visual_prompt))
-    target_layers = list(range(17, 36, 4))
+    # target_layers = list(range(17, 36, 4)) # for 3B
+    target_layers = list(range(13, 28, 4)) # for 7B
     attn_maps: List[torch.Tensor] = []
     attn_handles = register_attention_hooks(model, target_layers, attn_maps)
     
     # Precompute a few index tensors on the correct devices.
-    all_obj_indices = sorted({idx for group in target_object_indices for idx in group})
-    obj_indices_tensor = torch.tensor(all_obj_indices, device=model.device)
+    if attn_mode == "object":
+        all_obj_indices = sorted({idx for group in target_object_indices for idx in group})
+        obj_indices_tensor = torch.tensor(all_obj_indices, device=model.device)
+    else:
+        obj_indices_tensor = torch.tensor([-1], device=model.device)
     v_token_indices_tensor = torch.tensor(v_token_indices, device=model.device)
 
     response_T = []
@@ -344,13 +357,14 @@ def main(
                     )
 
                     option_inputs = processor(text=[option_prompt], images=image_inputs, return_tensors="pt")
+                    option_inputs = option_inputs.to(model.device)
                     # option_inputs = {k: v.to(model.device) if isinstance(v, torch.Tensor) else v for k, v in option_inputs.items()}
                     q_len = question_inputs.input_ids.shape[1]
                     option_ids = option_inputs.input_ids[:, q_len:]
                     labels = option_ids.reshape(-1)
 
                     # Build the full attention mask for incremental decoding.
-                    option_attn_mask = torch.ones_like(option_ids, dtype=question_inputs.attention_mask.dtype)
+                    option_attn_mask = torch.ones_like(option_ids, dtype=question_inputs.attention_mask.dtype, device=model.device)
                     full_attn_mask = torch.cat([
                         question_inputs.attention_mask, option_attn_mask
                     ], dim=1)
@@ -401,7 +415,7 @@ def main(
                 response_T.append(option_chosen)
                 break
             else:
-                out = model(**question_inputs)
+                _ = model(**question_inputs)
             
             if not attn_maps:
                 raise RuntimeError(
@@ -440,9 +454,9 @@ def main(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run qwen2.5_vl inference with ZoomEye-compatible outputs")
-    parser.add_argument("--model_path", type=str, default="/data1/pinci/ckpt/huggingface/Qwen2.5-VL-3B-Instruct", help="Path to LLaVA model checkpoint")
+    parser.add_argument("--model_path", type=str, default="/root/autodl-tmp/ckpt/Qwen2.5-VL-3B-Instruct", help="Path to LLaVA model checkpoint")
     parser.add_argument("--answers_file", type=str, default=None, help="Path to output answers .jsonl file")
-    parser.add_argument("--annotation_path", type=str, default="/data1/pinci/datasets/zoom_eye_data", help="Path to dataset root (contains benchmark folders)")
+    parser.add_argument("--annotation_path", type=str, default="/root/autodl-tmp/dataset/zoom_eye_data/zoom_eye_data", help="Path to dataset root (contains benchmark folders)")
     parser.add_argument("--benchmark", type=str, choices=["vstar", "hr-bench_4k", "hr-bench_8k", "mme-realworld"], default="vstar")
     parser.add_argument("--num_chunks", type=int, default=1)
     parser.add_argument("--chunk_idx", type=int, default=0)
@@ -453,6 +467,8 @@ if __name__ == "__main__":
     parser.add_argument("--vision_tower_path", type=str, default=None, help="Path to vision tower weights")
     parser.add_argument("--multi_gpu", action="store_true", help="Enable multi-GPU inference (device_map=auto)")
     parser.add_argument("--answer_tag", type=str, required=True, help="Answer tag")
+    parser.add_argument("--max_pixels", type=int, default=5500000, help="Max pixels")
+    parser.add_argument("--attn_mode", type=str, default="object", choices=["object", "output"], help="which token attended to visual tokens")
     # parser.add_argument("--dinov3_feat_path", type=str, required=True, help="Path to dinov3 features")
 
     args = parser.parse_args()
@@ -461,10 +477,10 @@ if __name__ == "__main__":
     args.lr = 0.02
     args.alpha = 400
     
-    model, processor, tokenizer = load_qwen_model(args.model_path, multi_gpu=args.multi_gpu)
+    model, processor, tokenizer = load_qwen_model(args.model_path, max_pixels=args.max_pixels)
     messages = lambda img, question: [{"role": "user", "content": [{"type": "image", "image": img}, {"type": "text", "text": question}]}]
 
-    if args.answers_file is None:
+    if args.answers_file is None:   
         answers_dir = f"eval/answers/{args.benchmark}"
         answers_dir = os.path.join(answers_dir, os.path.basename(args.model_path))
         os.makedirs(answers_dir, exist_ok=True)
@@ -512,7 +528,7 @@ if __name__ == "__main__":
         p.requires_grad = False
 
     for annotation in tqdm(annotations):
-        response = main(args, model, processor, tokenizer, annotation, messages, image_folder)
+        response = main(args, model, processor, tokenizer, annotation, messages, image_folder, args.attn_mode)
         print(response)
         annotation['output'] = response
         results_file.write(json.dumps(annotation) + "\n")
@@ -526,7 +542,7 @@ if __name__ == "__main__":
         print(f"Completed processing all annotations in a single run. Total results written to {args.answers_file}")
 
 
-    # image_path = "/data1/pinci/datasets/zoom_eye_data/vstar/relative_position/sa_6183.jpg"
+    # image_path = "/root/autodl-tmp/dataset/zoom_eye_data/zoom_eye_data/vstar/relative_position/sa_6183.jpg"
     # question = "Is the motorcycle on the left or right side of the dog?"
     # target_object = ["dog", "motorcycle"]
     # bbox_list = [[1455,1302,117,77],[684,945,150,110]]

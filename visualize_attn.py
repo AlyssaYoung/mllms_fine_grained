@@ -25,7 +25,7 @@ class HookedQwenAttention(Qwen2_5_VLAttention):
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_values : Optional[Cache] = None,
         output_attentions: bool = False,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
@@ -47,9 +47,9 @@ class HookedQwenAttention(Qwen2_5_VLAttention):
             query_states, key_states, cos, sin, self.rope_scaling["mrope_section"]
         )
 
-        if past_key_value is not None:
+        if past_key_values  is not None:
             cache_kwargs = {"sin": sin, "cos": cos, "cache_position": cache_position}
-            key_states, value_states = past_key_value.update(key_states, value_states, self.layer_idx, cache_kwargs)
+            key_states, value_states = past_key_values .update(key_states, value_states, self.layer_idx, cache_kwargs)
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -77,7 +77,7 @@ class HookedQwenAttention(Qwen2_5_VLAttention):
         # if output_attentions:
         #     print(f"[Hook] attn_weights shape = {attn_weights.shape}")
 
-        return attn_output, attn_weights, past_key_value
+        return attn_output, attn_weights, past_key_values 
 
 
 def visualize_warp_grid(f_X: torch.Tensor, f_Y: torch.Tensor, save_path: str = None):
@@ -388,9 +388,9 @@ def get_mllm_feat(model, processor, tokenizer, image_path, question, target_obje
     )
 
 if __name__ == "__main__":
-    image_path = "/data1/pinci/datasets/zoom_eye_data/vstar/relative_position/sa_6183.jpg"
+    image_path = "/root/autodl-tmp/dataset/zoom_eye_data/zoom_eye_data/vstar/relative_position/sa_6183.jpg"
     question = "Is the motorcycle on the left or right side of the dog?"
     target_object = ["dog", "motorcycle"]
-    model_path = "/data1/pinci/ckpt/huggingface/Qwen2.5-VL-3B-Instruct"
+    model_path = "/root/autodl-tmp/ckpt/Qwen2.5-VL-3B-Instruct"
     model, processor, tokenizer = load_qwen_model(model_path, multi_gpu=True)
     get_mllm_feat(model, processor, tokenizer, image_path, question, target_object)

@@ -3,7 +3,7 @@ from torchvision import transforms
 import torch
 from transformers import Qwen2_5_VLForConditionalGeneration, AutoTokenizer, AutoProcessor
 
-def load_qwen_model(model_path, multi_gpu):
+def load_qwen_model(model_path, max_pixels = 12845056):
     # num_gpus = torch.cuda.device_count()
 
     # max_mem = {i: "23GiB" for i in range(num_gpus)}
@@ -19,7 +19,7 @@ def load_qwen_model(model_path, multi_gpu):
     # You can set min_pixels and max_pixels according to your needs, such as a token range of 256-1280, to balance performance and cost.
     min_pixels = 256*28*28
     # max_pixels = 1280*28*28
-    max_pixels = 12845056
+    max_pixels = max_pixels
     processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct", min_pixels=min_pixels, max_pixels=max_pixels)
     # processor = AutoProcessor.from_pretrained(model_path)
     tokenizer = AutoTokenizer.from_pretrained(model_path)
