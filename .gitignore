@@ -135,3 +135,5 @@ pip-delete-this-directory.txt
 # custom dirs
 vis/
 quit/
+demo/pt_files/
+temp.py

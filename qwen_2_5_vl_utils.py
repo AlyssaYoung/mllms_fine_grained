@@ -20,8 +20,7 @@ def load_qwen_model(model_path, max_pixels = 12845056):
     min_pixels = 256*28*28
     # max_pixels = 1280*28*28
     max_pixels = max_pixels
-    processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct", min_pixels=min_pixels, max_pixels=max_pixels)
-    # processor = AutoProcessor.from_pretrained(model_path)
+    processor = AutoProcessor.from_pretrained(model_path, min_pixels=min_pixels, max_pixels=max_pixels)
     tokenizer = AutoTokenizer.from_pretrained(model_path)
 
     return model, processor, tokenizer
