@@ -130,9 +130,9 @@ def get_mllm_feat(model, processor, tokenizer, image_path, question):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run pca visualization")
-    parser.add_argument("--annotation_path", type=str, default="/data1/pinci/datasets/zoom_eye_data/", help="Path to dataset root (contains benchmark folders)")
+    parser.add_argument("--annotation_path", type=str, default="/root/dataset/zoom_eye_data/zoom_eye_data/", help="Path to dataset root (contains benchmark folders)")
     parser.add_argument("--benchmark", type=str, choices=["vstar", "hr-bench_4k", "hr-bench_8k", "mme-realworld"], default="vstar")
-    parser.add_argument('--dinov3_feat_path', type=str, default="/data1/pinci/datasets/zoom_eye_data/dinov3_features/vstar/dinov3_mllm_patch_28.pt")
+    parser.add_argument('--dinov3_feat_path', type=str, default="/root/dataset/zoom_eye_data/zoom_eye_data/dinov3_features/vstar/dinov3_mllm_patch_28.pt")
     parser.add_argument('--vis_dir', type=str, default='./vis/pca_visualization/dinov3')
     args = parser.parse_args()
 
@@ -152,8 +152,8 @@ if __name__ == "__main__":
         visualize_feature_pca(dinov3_patch_token, (v_token_h, v_token_w), save_path=save_path)
 
 
-    # image_path = "/data1/pinci/datasets/zoom_eye_data/vstar/relative_position/sa_6183.jpg"
+    # image_path = "/root/dataset/zoom_eye_data/zoom_eye_data/vstar/relative_position/sa_6183.jpg"
     # question = "Is the motorcycle on the left or right side of the dog?"
-    # model_path = "/data1/pinci/ckpt/huggingface/Qwen2.5-VL-3B-Instruct"
+    # model_path = "/root/autodl-tmp/ckpt/Qwen2.5-VL-3B-Instruct"
     # model, processor, tokenizer = load_qwen_model(model_path, multi_gpu=True)
     # get_mllm_feat(model, processor, tokenizer, image_path, question)

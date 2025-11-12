@@ -10,12 +10,17 @@ import pdb
 
 import matplotlib.pyplot as plt
 import matplotlib
+from matplotlib import font_manager
 import seaborn as sns
 from tqdm import tqdm
 import json
 import os
 
-matplotlib.rcParams['font.family'] = 'Noto Sans CJK JP'
+available_fonts = set(f.name for f in font_manager.fontManager.ttflist)
+if 'Noto Sans CJK JP' in available_fonts:
+    matplotlib.rcParams['font.family'] = 'Noto Sans CJK JP'
+else:
+    matplotlib.rcParams['font.family'] = 'DejaVu Sans'
 
 def visualize_entropy_heatmap(entropy_matrix, generated_ids, tokenizer, save_path=None, annotate_values=False, prompt_length=None):
     """
@@ -27,8 +32,8 @@ def visualize_entropy_heatmap(entropy_matrix, generated_ids, tokenizer, save_pat
     prompt_length: length of the prompt (to extract only generated tokens)
     """
     entropy_matrix = np.array(entropy_matrix)  # shape: [T, L]
-    # entropy_matrix = entropy_matrix.T          # -> shape: [L, T]
-    entropy_matrix = entropy_matrix.T[::2] 
+    entropy_matrix = entropy_matrix.T          # -> shape: [L, T]
+    # entropy_matrix = entropy_matrix.T[::2] 
     num_layers, num_steps = entropy_matrix.shape
 
     # 解码 token（只保留生成的 token 段）
@@ -172,6 +177,7 @@ def visualize_entropy_heatmap(entropy_matrix, generated_ids, tokenizer, save_pat
         plt.savefig(save_path, bbox_inches='tight', dpi=300)
     else:
         plt.show()
+
 def register_entropy_hooks(model):
     def hook_fn(layer, input, output):
         # output: hidden_states, shape: [B, seq_len, hidden_dim]
@@ -185,9 +191,10 @@ def register_entropy_hooks(model):
         entropy = -torch.sum(probs * torch.log(probs + 1e-8), dim=-1) / torch.log(torch.tensor(10.0))
         layer_entropy_list.append(entropy.item())  # append 每一层的值
 
-    # hook 每一层
-    for layer in model.model.layers:
-        layer.register_forward_hook(hook_fn)
+    # hook 偶数层
+    for idx, layer in enumerate(model.model.layers):
+        if idx % 2 == 0:
+            layer.register_forward_hook(hook_fn)
 
 def main(model, processor, tokenizer, annotation, messages_fn, image_folder, vis_dir):
     input_image = annotation["input_image"]
@@ -217,44 +224,47 @@ def main(model, processor, tokenizer, annotation, messages_fn, image_folder, vis
     layer_entropy_list = []
     entropy_matrix = []
     past_key_values = None
-
-    for i in range(answer_ids.shape[1]):
-        layer_entropy_list.clear()
-
-        next_token = answer_ids[:, i:i+1]
-
-        # Forward pass with current generated sequence
-        if past_key_values is None:
-            outputs = model(
-                input_ids=generated, 
-                attention_mask=attention_mask, 
-                use_cache=True,
-                pixel_values=question_inputs.pixel_values,
-                image_grid_thw=question_inputs.image_grid_thw
-            )
-        else:
-            outputs = model(
-                input_ids=next_token,
-                attention_mask=attention_mask,
-                past_key_values=past_key_values,
-                use_cache=True,
-                pixel_values=None,  # Don't reprocess image
-                image_grid_thw=question_inputs.image_grid_thw  # Keep image grid info
-            )
-        past_key_values = outputs.past_key_values
-        
-        entropy_matrix.append(layer_entropy_list.copy())
-
-        # Get next token from logits
-        logits = outputs.logits[:, -1, :].float()  # current time step's logits, last token
-        
-        # Append new token to generated sequence
-        generated = torch.cat((generated, next_token), dim=1)
-        attention_mask = torch.cat((attention_mask, torch.ones_like(next_token)), dim=1)
-
-        token_text = tokenizer.decode(next_token[0], skip_special_tokens=False)
-        print(f"Step {i+1}: token = '{token_text}'")
     
+    with torch.no_grad():
+        for i in range(answer_ids.shape[1]):
+            layer_entropy_list.clear()
+
+            next_token = answer_ids[:, i:i+1]
+
+            # Forward pass with current generated sequence
+            if past_key_values is None:
+                outputs = model(
+                    input_ids=generated, 
+                    attention_mask=attention_mask, 
+                    use_cache=True,
+                    pixel_values=question_inputs.pixel_values,
+                    image_grid_thw=question_inputs.image_grid_thw
+                )
+            else:
+                outputs = model(
+                    input_ids=next_token,
+                    attention_mask=attention_mask,
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                    pixel_values=None,  # Don't reprocess image
+                    image_grid_thw=question_inputs.image_grid_thw  # Keep image grid info
+                )
+            past_key_values = outputs.past_key_values
+            
+            entropy_matrix.append(layer_entropy_list.copy())
+
+            # Get next token from logits
+            logits = outputs.logits[:, -1, :].float()  # current time step's logits, last token
+            
+            # Append new token to generated sequence
+            generated = torch.cat((generated, next_token), dim=1)
+            attention_mask = torch.cat((attention_mask, torch.ones_like(next_token)), dim=1)
+
+            token_text = tokenizer.decode(next_token[0], skip_special_tokens=False)
+            print(f"Step {i+1}: token = '{token_text}'")
+    
+    del outputs, logits, past_key_values
+    torch.cuda.empty_cache()
     entropy_array = np.array(entropy_matrix)  # [T, L]
     vis_save_path = os.path.join(vis_dir, input_image)
     visualize_entropy_heatmap(
@@ -267,8 +277,8 @@ def main(model, processor, tokenizer, annotation, messages_fn, image_folder, vis
     )
 
 if __name__ == "__main__":
-    model_name = "/data1/pinci/ckpt/huggingface/Qwen2.5-VL-3B-Instruct"
-    processor = AutoProcessor.from_pretrained(model_name, max_pixels=5500000)
+    model_name = "/root/autodl-tmp/ckpt/Qwen2.5-VL-3B-Instruct"
+    processor = AutoProcessor.from_pretrained(model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
         model_name, torch_dtype=torch.bfloat16, device_map="auto",
@@ -279,10 +289,10 @@ if __name__ == "__main__":
 
     messages = lambda img, question: [{"role": "user", "content": [{"type": "image", "image": img}, {"type": "text", "text": question}]}]
 
-    annotation_file = "/data1/pinci/datasets/zoom_eye_data/vstar/annotation_vstar.json"
+    annotation_file = "/root/dataset/zoom_eye_data/zoom_eye_data/vstar/annotation_vstar.json"
     with open(annotation_file, 'r') as f:
         all_annotations = json.load(f)
-    image_folder = "/data1/pinci/datasets/zoom_eye_data/vstar"
+    image_folder = "/root/dataset/zoom_eye_data/zoom_eye_data/vstar"
     vis_dir = "vis/entropy/vstar"
     os.makedirs(vis_dir, exist_ok=True)
 

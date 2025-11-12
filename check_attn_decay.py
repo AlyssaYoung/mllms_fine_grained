@@ -65,6 +65,7 @@ def visualize_attn_grid(pil_image_resized: Image.Image,
 def plot_key_object_attn_curve(
     key_object_attn_percents: list,
     color: str = "blue",
+    title: str = "Visual Attention to Key Objects across Layers",
     save_path: str = "key_object_attn_curve.jpg"
 ):
     plt.figure(figsize=(10, 4))
@@ -75,8 +76,8 @@ def plot_key_object_attn_curve(
     plt.fill_between(x, y, color=color, alpha=0.2)
 
     plt.xlabel("Layer", fontsize=12)
-    plt.ylabel("Key Object Attention (%)", fontsize=12)
-    plt.title("Visual Attention to Key Objects across Layers", fontsize=14)
+    plt.ylabel("Attention (%)", fontsize=12)
+    plt.title(title, fontsize=14)
     plt.xticks(range(0, len(y), 2))
     plt.ylim(0, max(y) * 1.2 if y else 1)
     plt.grid(True, linestyle='--', alpha=0.4)
@@ -106,9 +107,11 @@ def compute_key_object_attn_percent(
     attn_to_all_img = attn_to_image_tokens.sum(dim=-1)  # (H,)
 
     eps = 1e-8
-    percent = attn_to_key.mean() / (attn_to_all_img.mean() + eps)
+    key_object_to_image_percent = attn_to_key.mean() / (attn_to_all_img.mean() + eps)
 
-    return percent
+    visual_to_all_percent = attn_to_all_img.mean() / (attn_to_all.sum(dim=-1).mean() + eps)
+
+    return key_object_to_image_percent, visual_to_all_percent
 
 
 def merge_bboxes(bbox1, bbox2):
@@ -247,37 +250,29 @@ def main(model, processor, tokenizer, image_path, question, target_object, bbox_
     attn_maps = outputs.attentions
     num_layers = len(attn_maps)
 
-    # save pt file
-    attn_layer_data = {
-        "image_path": image_path,
-        "attn_maps": [a.cpu() for a in attn_maps],  # keep full [1, H, S, S]
-        "obj_token_indices": obj_indices_tensor.cpu(),
-        "v_token_indices": v_token_indices_tensor.cpu(),
-        "mask": mask.flatten().cpu(),  # shape [H*W]
-        "grid_shape": grid_shape,
-    }
+    obj2img_attn_maps = []
+    key_object_attn_percents = []
+    visual_attn_percents = []
+    os.makedirs(os.path.join(vis_path, "attn_map_grid"), exist_ok=True)
+    os.makedirs(os.path.join(vis_path, "obj_percent_curve"), exist_ok=True)
+    os.makedirs(os.path.join(vis_path, "visual_percent_curve"), exist_ok=True)
     parts = os.path.normpath(image_path).split(os.sep)
     base_name = f"{parts[-2]}_{parts[-1]}"[:-4]
-    os.makedirs(pt_save_path, exist_ok=True)
-    torch.save(attn_layer_data, f"{pt_save_path}/{base_name}.pt")
 
-    # obj2img_attn_maps = []
-    # key_object_attn_percents = []
-    # os.makedirs(os.path.join(vis_path, "attn_map_grid"), exist_ok=True)
-    # os.makedirs(os.path.join(vis_path, "curve"), exist_ok=True)
+    print(f"base_name: {base_name}")
 
-    # print(f"base_name: {base_name}")
-
-    # for layer_idx in range(num_layers):
-    #     attn_mean_heads = attn_maps[layer_idx].mean(dim=1).squeeze(0) # (seq_len, seq_len)
-    #     obj_indices_tensor = obj_indices_tensor.to(attn_mean_heads.device) 
-    #     v_token_indices_tensor = v_token_indices_tensor.to(attn_mean_heads.device)
-    #     obj_attn = attn_mean_heads[obj_indices_tensor, :].mean(dim=0) # (seq_len,)
-    #     obj2img = obj_attn[v_token_indices_tensor].detach().cpu()
-    #     obj2img_2d = obj2img.reshape(grid_shape[0], grid_shape[1])
-    #     visual_attn_2d = F.interpolate(obj2img_2d.unsqueeze(0).unsqueeze(0), size=resized_resolution, mode='bicubic', align_corners=False).squeeze()
-    #     obj2img_attn_maps.append(visual_attn_2d)
-    #     key_object_attn_percents.append(compute_key_object_attn_percent(attn_maps[layer_idx].squeeze(0), obj_indices_tensor.squeeze(0), v_token_indices_tensor.squeeze(0), mask.flatten()).item())
+    for layer_idx in range(num_layers):
+        # attn_mean_heads = attn_maps[layer_idx].mean(dim=1).squeeze(0) # (seq_len, seq_len)
+        # obj_indices_tensor = obj_indices_tensor.to(attn_mean_heads.device) 
+        # v_token_indices_tensor = v_token_indices_tensor.to(attn_mean_heads.device)
+        # obj_attn = attn_mean_heads[obj_indices_tensor, :].mean(dim=0) # (seq_len,)
+        # obj2img = obj_attn[v_token_indices_tensor].detach().cpu()
+        # obj2img_2d = obj2img.reshape(grid_shape[0], grid_shape[1])
+        # visual_attn_2d = F.interpolate(obj2img_2d.unsqueeze(0).unsqueeze(0), size=resized_resolution, mode='bicubic', align_corners=False).squeeze()
+        # obj2img_attn_maps.append(visual_attn_2d)
+        key_object_to_image_percent, visual_to_all_percent = compute_key_object_attn_percent(attn_maps[layer_idx].squeeze(0), obj_indices_tensor.squeeze(0), v_token_indices_tensor.squeeze(0), mask.flatten())
+        key_object_attn_percents.append(key_object_to_image_percent.item())
+        visual_attn_percents.append(visual_to_all_percent.item())
     
     # visualize_attn_grid(
     #     pil_image_resized,
@@ -285,23 +280,41 @@ def main(model, processor, tokenizer, image_path, question, target_object, bbox_
     #     grid_size=(6, 6),
     #     save_path=f"{vis_path}/attn_map_grid/{base_name}.jpg"
     # )
-    # # print(key_object_attn_percents)
+    # print(key_object_attn_percents)
     # plot_key_object_attn_curve(
     #     key_object_attn_percents,
-    #     save_path=f"{vis_path}/curve/{base_name}.jpg"
+    #     title="Visual Attention to Key Objects across Layers",
+    #     save_path=f"{vis_path}/obj_percent_curve/{base_name}.jpg"
     # )
+    plot_key_object_attn_curve(
+        visual_attn_percents,
+        title="Visual Attention to All Tokens across Layers",
+        save_path=f"{vis_path}/visual_percent_curve/{base_name}.jpg"
+    )
+
+    # save pt file
+    # attn_layer_data = {
+    #     "image_path": image_path,
+    #     "attn_maps": [a.cpu() for a in attn_maps],  # keep full [1, H, S, S]
+    #     "obj_token_indices": obj_indices_tensor.cpu(),
+    #     "v_token_indices": v_token_indices_tensor.cpu(),
+    #     "mask": mask.flatten().cpu(),  # shape [H*W]
+    #     "grid_shape": grid_shape,
+    # }
+    # os.makedirs(pt_save_path, exist_ok=True)
+    # torch.save(attn_layer_data, f"{pt_save_path}/{base_name}.pt")
 
 if __name__ == "__main__":
-    # image_path = "/data1/pinci/datasets/zoom_eye_data/vstar/relative_position/sa_6183.jpg"
+    # image_path = "/root/dataset/zoom_eye_data/zoom_eye_data/vstar/relative_position/sa_6183.jpg"
     # question = "Is the motorcycle on the left or right side of the dog?"
     # target_object = ["dog", "motorcycle"]
     # bbox_list = [[1455,1302,117,77],[684,945,150,110]]
-    image_folder = "/data1/pinci/datasets/zoom_eye_data/vstar"
+    image_folder = "/root/dataset/zoom_eye_data/zoom_eye_data/vstar"
     correct_demo_file = "demo/correct_subset.jsonl"
     incorrect_demo_file = "demo/incorrect_subset.jsonl"
 
-    model_path = "/data1/pinci/ckpt/huggingface/Qwen2.5-VL-3B-Instruct"
-    max_pixels = 28 * 28 * 400 # for save GPU memory
+    model_path = "/root/autodl-tmp/ckpt/Qwen2.5-VL-3B-Instruct"
+    max_pixels = 3600000 # for save GPU memory
     model, processor, tokenizer = load_qwen_model(model_path, max_pixels=max_pixels)
 
     pt_save_path = "demo/pt_files/correct"

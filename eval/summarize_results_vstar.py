@@ -8,7 +8,7 @@ import csv
 #     "/abs/path/to/result_2.jsonl",
 #     # ... 填满所有 13 个 jsonl 文件
 # ]
-jsonl_dir = "/home/pinci/code/mllms_fine_grained/eval/answers/vstar/llava-v1.5-7b"
+jsonl_dir = "/root/code/mllms_fine_grained/eval/answers/vstar/llava-v1.5-7b"
 jsonl_list = os.listdir(jsonl_dir)
 jsonl_list = [os.path.join(jsonl_dir, p) for p in jsonl_list]
 print(jsonl_list)
