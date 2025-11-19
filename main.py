@@ -204,9 +204,9 @@ def get_response(model, tokenizer, image_processor, annotation, image_folder=Non
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run LLaVA-v1.5 inference with ZoomEye-compatible outputs")
-    parser.add_argument("--model_path", type=str, default="/data/pinci/ckpt/huggingface/llava-v1.5-7b", help="Path to LLaVA model checkpoint")
+    parser.add_argument("--model_path", type=str, default="/data1/pinci/ckpt/huggingface/llava-v1.5-7b", help="Path to LLaVA model checkpoint")
     parser.add_argument("--answers_file", type=str, default=None, help="Path to output answers .jsonl file")
-    parser.add_argument("--annotation_path", type=str, default="/data/pinci/datasets/zoom_eye_data", help="Path to dataset root (contains benchmark folders)")
+    parser.add_argument("--annotation_path", type=str, default="/data1/pinci/datasets/zoom_eye_data", help="Path to dataset root (contains benchmark folders)")
     parser.add_argument("--benchmark", type=str, choices=["vstar", "hr-bench_4k", "hr-bench_8k", "mme-realworld"], default="vstar")
     parser.add_argument("--num_chunks", type=int, default=1)
     parser.add_argument("--chunk_idx", type=int, default=0)

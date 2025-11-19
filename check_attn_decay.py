@@ -305,15 +305,15 @@ def main(model, processor, tokenizer, image_path, question, target_object, bbox_
     # torch.save(attn_layer_data, f"{pt_save_path}/{base_name}.pt")
 
 if __name__ == "__main__":
-    # image_path = "/root/dataset/zoom_eye_data/zoom_eye_data/vstar/relative_position/sa_6183.jpg"
+    # image_path = "/data1/pinci/datasets/zoom_eye_data/vstar/relative_position/sa_6183.jpg"
     # question = "Is the motorcycle on the left or right side of the dog?"
     # target_object = ["dog", "motorcycle"]
     # bbox_list = [[1455,1302,117,77],[684,945,150,110]]
-    image_folder = "/root/dataset/zoom_eye_data/zoom_eye_data/vstar"
+    image_folder = "/data1/pinci/datasets/zoom_eye_data/vstar"
     correct_demo_file = "demo/correct_subset.jsonl"
     incorrect_demo_file = "demo/incorrect_subset.jsonl"
 
-    model_path = "/root/autodl-tmp/ckpt/Qwen2.5-VL-3B-Instruct"
+    model_path = "/data1/pinci/ckpt/huggingface/Qwen2.5-VL-3B-Instruct"
     max_pixels = 3600000 # for save GPU memory
     model, processor, tokenizer = load_qwen_model(model_path, max_pixels=max_pixels)
 

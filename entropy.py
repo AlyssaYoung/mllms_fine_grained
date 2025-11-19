@@ -277,7 +277,7 @@ def main(model, processor, tokenizer, annotation, messages_fn, image_folder, vis
     )
 
 if __name__ == "__main__":
-    model_name = "/root/autodl-tmp/ckpt/Qwen2.5-VL-3B-Instruct"
+    model_name = "/data1/pinci/ckpt/huggingface/Qwen2.5-VL-3B-Instruct"
     processor = AutoProcessor.from_pretrained(model_name)
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
@@ -289,10 +289,10 @@ if __name__ == "__main__":
 
     messages = lambda img, question: [{"role": "user", "content": [{"type": "image", "image": img}, {"type": "text", "text": question}]}]
 
-    annotation_file = "/root/dataset/zoom_eye_data/zoom_eye_data/vstar/annotation_vstar.json"
+    annotation_file = "/data1/pinci/datasets/zoom_eye_data/vstar/annotation_vstar.json"
     with open(annotation_file, 'r') as f:
         all_annotations = json.load(f)
-    image_folder = "/root/dataset/zoom_eye_data/zoom_eye_data/vstar"
+    image_folder = "/data1/pinci/datasets/zoom_eye_data/vstar"
     vis_dir = "vis/entropy/vstar"
     os.makedirs(vis_dir, exist_ok=True)
 

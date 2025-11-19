@@ -1,7 +1,7 @@
 import os
 import torch
 import sys
-sys.path.insert(0, "/data/pinci/code/mllms_fine_grained")
+sys.path.insert(0, "/data1/pinci/code/mllms_fine_grained")
 from PIL import Image
 
 from transformers import AutoTokenizer
